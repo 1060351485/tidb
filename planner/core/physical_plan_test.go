@@ -49,6 +49,13 @@ func utilitiesSetup(tk *testkit.TestKit) (*parser.Parser, infoschema.InfoSchema,
 	return p, is, se
 }
 
+//func utilitiesSetup2() (*parser.Parser, infoschema.InfoSchema) {
+//	p := parser.New()
+//	p.SetParserConfig(parser.ParserConfig{EnableWindowFunction: true, EnableStrictDoubleTypeCheck: true})
+//	is := infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable()})
+//	return p, is
+//}
+
 func TestDAGPlanBuilderSimpleCase(t *testing.T) {
 	defer testleak.AfterTestT(t)()
 	store, clean := testkit.CreateMockStore(t)
@@ -136,7 +143,7 @@ func TestAnalyzeBuildSucc(t *testing.T) {
 		if tt.succ {
 			require.NoError(t, err, comment)
 		} else {
-			require.NoError(t, err, comment)
+			require.Error(t, err, comment)
 		}
 	}
 }
@@ -223,7 +230,7 @@ func TestDAGPlanBuilderSubquery(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	p, is, se := utilitiesSetup(tk)
 	tk.MustExec("use test")
-	// disable only full group by
+	tk.MustExec("set sql_mode='STRICT_TRANS_TABLES'") // disable only full group by
 	ctx := se.(sessionctx.Context)
 	sessionVars := ctx.GetSessionVars()
 	sessionVars.SetHashAggFinalConcurrency(1)
@@ -313,8 +320,8 @@ func TestDAGPlanBuilderBasePhysicalPlan(t *testing.T) {
 			output[i].Best = core.ToString(plan)
 			output[i].Hints = hint.RestoreOptimizerHints(core.GenHintsFromPhysicalPlan(plan))
 		})
-		require.Equal(t, output[i].Best, core.ToString(plan), fmt.Sprintf("for %s", tt))
-		require.Equal(t, output[i].Hints, hint.RestoreOptimizerHints(core.GenHintsFromPhysicalPlan(plan)), fmt.Sprintf("for %s", tt))
+		require.Equalf(t, output[i].Best, core.ToString(plan), "for %s", tt)
+		require.Equalf(t, output[i].Hints, hint.RestoreOptimizerHints(core.GenHintsFromPhysicalPlan(plan)), "for %s", tt)
 	}
 }
 
@@ -549,13 +556,29 @@ func TestEliminateMaxOneRow(t *testing.T) {
 	}
 }
 
+type overrideStore struct{ kv.Storage }
+
+func (store overrideStore) GetClient() kv.Client {
+	cli := store.Storage.GetClient()
+	return overrideClient{cli}
+}
+
+type overrideClient struct{ kv.Client }
+
+func (cli overrideClient) IsRequestTypeSupported(reqType, subType int64) bool {
+	return false
+}
+
 func TestRequestTypeSupportedOff(t *testing.T) {
 	defer testleak.AfterTestT(t)()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
-	p, is, se := utilitiesSetup(tk)
-	tk.MustExec("use test")
+	p, is, _ := utilitiesSetup(tk)
+	se, err := session.CreateSession4Test(overrideStore{store})
+	require.NoError(t, err)
+	_, err = se.Execute(context.TODO(), "use test")
+	require.NoError(t, err)
 
 	sql := "select * from t where a in (1, 10, 20)"
 	expect := "TableReader(Table(t))->Sel([in(test.t.a, 1, 10, 20)])"
@@ -564,7 +587,7 @@ func TestRequestTypeSupportedOff(t *testing.T) {
 	require.NoError(t, err)
 	plan, _, err := planner.Optimize(context.TODO(), se, stmt, is)
 	require.NoError(t, err)
-	require.Equal(t, expect, core.ToString(plan), fmt.Sprintf("for %s", sql))
+	require.Equal(t, expect, core.ToString(plan), "for %s", sql)
 }
 
 func TestIndexJoinUnionScan(t *testing.T) {
@@ -580,7 +603,6 @@ func TestIndexJoinUnionScan(t *testing.T) {
 	}
 	tk.MustExec("create table t (a int primary key, b int, index idx(a))")
 	tk.MustExec("create table tt (a int primary key) partition by range (a) (partition p0 values less than (100), partition p1 values less than (200))")
-
 	tk.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.Static) + `'`)
 
 	planSuiteData := core.GetPlanSuiteData()
@@ -906,15 +928,13 @@ func TestExplainJoinHints(t *testing.T) {
 
 func TestAggToCopHint(t *testing.T) {
 	defer testleak.AfterTestT(t)()
-	store, clean := testkit.CreateMockStore(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
-	p, is, se := utilitiesSetup(tk)
-
+	p, _, se := utilitiesSetup(tk)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists ta")
 	tk.MustExec("create table ta(a int, b int, index(a))")
-
 	var (
 		input  []string
 		output []struct {
@@ -927,6 +947,7 @@ func TestAggToCopHint(t *testing.T) {
 	planSuiteData.GetTestCases(t, &input, &output)
 
 	ctx := context.Background()
+	is := dom.InfoSchema()
 	for i, test := range input {
 		comment := fmt.Sprintf("case:%v sql:%s", i, test)
 		testdata.OnRecord(func() {
@@ -1438,10 +1459,11 @@ func testDAGPlanBuilderSplitAvg(t *testing.T, root core.PhysicalPlan) {
 
 func TestIndexJoinHint(t *testing.T) {
 	defer testleak.AfterTestT(t)()
-	store, clean := testkit.CreateMockStore(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
-	p, is, se := utilitiesSetup(tk)
+	p, _, se := utilitiesSetup(tk)
+	is := dom.InfoSchema()
 	ctx := context.Background()
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists test.t1, test.t2, test.t;")
@@ -1796,10 +1818,10 @@ func TestMPPSinglePartitionType(t *testing.T) {
 	)
 	planSuiteData := core.GetPlanSuiteData()
 	planSuiteData.GetTestCases(t, &input, &output)
-	store, clean := testkit.CreateMockStore(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
-	_, is, _ := utilitiesSetup(tk)
+	is := dom.InfoSchema()
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists employee")
 	tk.MustExec("create table employee(empid int, deptid int, salary decimal(10,2))")
