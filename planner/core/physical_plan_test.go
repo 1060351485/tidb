@@ -41,11 +41,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func utilitiesSetup() (*parser.Parser, infoschema.InfoSchema) {
+func utilitiesSetup(tk *testkit.TestKit) (*parser.Parser, infoschema.InfoSchema, session.Session) {
 	p := parser.New()
 	p.SetParserConfig(parser.ParserConfig{EnableWindowFunction: true, EnableStrictDoubleTypeCheck: true})
 	is := infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable()})
-	return p, is
+	se := tk.Session()
+	return p, is, se
 }
 
 func TestDAGPlanBuilderSimpleCase(t *testing.T) {
@@ -53,12 +54,9 @@ func TestDAGPlanBuilderSimpleCase(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
-	p, is := utilitiesSetup()
-	se := tk.Session()
-	_, err := se.Execute(context.Background(), "use test")
-	require.NoError(t, err)
-	_, err = se.Execute(context.Background(), "set tidb_opt_limit_push_down_threshold=0")
-	require.NoError(t, err)
+	p, is, se := utilitiesSetup(tk)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_opt_limit_push_down_threshold=0")
 	var input []string
 	var output []struct {
 		SQL  string
@@ -87,13 +85,10 @@ func TestAnalyzeBuildSucc(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
-	p, is := utilitiesSetup()
-	se := tk.Session()
-	_, err := se.Execute(context.Background(), "use test")
-	require.NoError(t, err)
+	p, is, se := utilitiesSetup(tk)
+	tk.MustExec("use test")
 	sctx := se.(sessionctx.Context)
-	_, err = se.Execute(context.Background(), "create table t(a int)")
-	require.NoError(t, err)
+	tk.MustExec("create table t(a int)")
 	tests := []struct {
 		sql      string
 		succ     bool
@@ -127,8 +122,7 @@ func TestAnalyzeBuildSucc(t *testing.T) {
 	}
 	for i, tt := range tests {
 		comment := fmt.Sprintf("The %v-th test failed", i)
-		_, err := se.Execute(context.Background(), fmt.Sprintf("set @@tidb_analyze_version=%v", tt.statsVer))
-		require.NoError(t, err)
+		tk.MustExec(fmt.Sprintf("set @@tidb_analyze_version=%v", tt.statsVer))
 
 		stmt, err := p.ParseOneStmt(tt.sql, "", "")
 		if tt.succ {
@@ -152,13 +146,10 @@ func TestAnalyzeSetRate(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
-	p, is := utilitiesSetup()
-	se := tk.Session()
-	_, err := se.Execute(context.Background(), "use test")
-	require.NoError(t, err)
+	p, is, se := utilitiesSetup(tk)
+	tk.MustExec("use test")
 	sctx := se.(sessionctx.Context)
-	_, err = se.Execute(context.Background(), "create table t(a int)")
-	require.NoError(t, err)
+	tk.MustExec("create table t(a int)")
 	tests := []struct {
 		sql  string
 		rate float64
@@ -178,7 +169,6 @@ func TestAnalyzeSetRate(t *testing.T) {
 	}
 	for i, tt := range tests {
 		comment := fmt.Sprintf("The %v-th test failed", i)
-		require.NoError(t, err)
 
 		stmt, err := p.ParseOneStmt(tt.sql, "", "")
 		require.NoError(t, err, comment)
@@ -196,10 +186,8 @@ func TestDAGPlanBuilderJoin(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
-	p, is := utilitiesSetup()
-	se := tk.Session()
-	_, err := se.Execute(context.Background(), "use test")
-	require.NoError(t, err)
+	p, is, se := utilitiesSetup(tk)
+	tk.MustExec("use test")
 	ctx := se.(sessionctx.Context)
 	sessionVars := ctx.GetSessionVars()
 	sessionVars.ExecutorConcurrency = 4
@@ -233,12 +221,9 @@ func TestDAGPlanBuilderSubquery(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
-	p, is := utilitiesSetup()
-	se := tk.Session()
-	_, err := se.Execute(context.Background(), "use test")
-	require.NoError(t, err)
-	_, err = se.Execute(context.Background(), "set sql_mode='STRICT_TRANS_TABLES'")
-	require.NoError(t, err) // disable only full group by
+	p, is, se := utilitiesSetup(tk)
+	tk.MustExec("use test")
+	// disable only full group by
 	ctx := se.(sessionctx.Context)
 	sessionVars := ctx.GetSessionVars()
 	sessionVars.SetHashAggFinalConcurrency(1)
@@ -273,10 +258,8 @@ func TestDAGPlanTopN(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
-	p, is := utilitiesSetup()
-	se := tk.Session()
-	_, err := se.Execute(context.Background(), "use test")
-	require.NoError(t, err)
+	p, is, se := utilitiesSetup(tk)
+	tk.MustExec("use test")
 
 	var input []string
 	var output []struct {
@@ -305,10 +288,8 @@ func TestDAGPlanBuilderBasePhysicalPlan(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
-	p, is := utilitiesSetup()
-	se := tk.Session()
-	_, err := se.Execute(context.Background(), "use test")
-	require.NoError(t, err)
+	p, is, se := utilitiesSetup(tk)
+	tk.MustExec("use test")
 
 	var input []string
 	var output []struct {
@@ -342,10 +323,8 @@ func TestDAGPlanBuilderUnion(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
-	p, is := utilitiesSetup()
-	se := tk.Session()
-	_, err := se.Execute(context.Background(), "use test")
-	require.NoError(t, err)
+	p, is, se := utilitiesSetup(tk)
+	tk.MustExec("use test")
 
 	var input []string
 	var output []struct {
@@ -374,10 +353,8 @@ func TestDAGPlanBuilderUnionScan(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
-	p, is := utilitiesSetup()
-	se := tk.Session()
-	_, err := se.Execute(context.Background(), "use test")
-	require.NoError(t, err)
+	p, is, se := utilitiesSetup(tk)
+	tk.MustExec("use test")
 
 	var input []string
 	var output []struct {
@@ -412,12 +389,9 @@ func TestDAGPlanBuilderAgg(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
-	p, is := utilitiesSetup()
-	se := tk.Session()
-	_, err := se.Execute(context.Background(), "use test")
-	require.NoError(t, err)
-	_, err = se.Execute(context.Background(), "set sql_mode='STRICT_TRANS_TABLES'")
-	require.NoError(t, err) // disable only full group by
+	p, is, se := utilitiesSetup(tk)
+	tk.MustExec("use test")
+	tk.MustExec("set sql_mode='STRICT_TRANS_TABLES'") // disable only full group by
 	ctx := se.(sessionctx.Context)
 	sessionVars := ctx.GetSessionVars()
 	sessionVars.SetHashAggFinalConcurrency(1)
@@ -452,10 +426,8 @@ func TestRefine(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
-	p, is := utilitiesSetup()
-	se := tk.Session()
-	_, err := se.Execute(context.Background(), "use test")
-	require.NoError(t, err)
+	p, is, se := utilitiesSetup(tk)
+	tk.MustExec("use test")
 
 	var input []string
 	var output []struct {
@@ -485,14 +457,10 @@ func TestAggEliminator(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
-	p, is := utilitiesSetup()
-	se := tk.Session()
-	_, err := se.Execute(context.Background(), "use test")
-	require.NoError(t, err)
-	_, err = se.Execute(context.Background(), "set tidb_opt_limit_push_down_threshold=0")
-	require.NoError(t, err)
-	_, err = se.Execute(context.Background(), "set sql_mode='STRICT_TRANS_TABLES'")
-	require.NoError(t, err) // disable only full group by
+	p, is, se := utilitiesSetup(tk)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_opt_limit_push_down_threshold=0")
+	tk.MustExec("set sql_mode='STRICT_TRANS_TABLES'") // disable only full group by
 	var input []string
 	var output []struct {
 		SQL  string
@@ -586,10 +554,8 @@ func TestRequestTypeSupportedOff(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
-	p, is := utilitiesSetup()
-	se := tk.Session()
-	_, err := se.Execute(context.Background(), "use test")
-	require.NoError(t, err)
+	p, is, se := utilitiesSetup(tk)
+	tk.MustExec("use test")
 
 	sql := "select * from t where a in (1, 10, 20)"
 	expect := "TableReader(Table(t))->Sel([in(test.t.a, 1, 10, 20)])"
@@ -683,10 +649,8 @@ func TestDoSubquery(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
-	p, is := utilitiesSetup()
-	se := tk.Session()
-	_, err := se.Execute(context.Background(), "use test")
-	require.NoError(t, err)
+	p, is, se := utilitiesSetup(tk)
+	tk.MustExec("use test")
 	tests := []struct {
 		sql  string
 		best string
@@ -711,10 +675,8 @@ func TestIndexLookupCartesianJoin(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
-	p, is := utilitiesSetup()
-	se := tk.Session()
-	_, err := se.Execute(context.Background(), "use test")
-	require.NoError(t, err)
+	p, is, se := utilitiesSetup(tk)
+	tk.MustExec("use test")
 	sql := "select /*+ TIDB_INLJ(t1, t2) */ * from t t1 join t t2"
 	stmt, err := p.ParseOneStmt(sql, "", "")
 	require.NoError(t, err)
@@ -732,10 +694,8 @@ func TestSemiJoinToInner(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
-	p, is := utilitiesSetup()
-	se := tk.Session()
-	_, err := se.Execute(context.Background(), "use test")
-	require.NoError(t, err)
+	p, is, se := utilitiesSetup(tk)
+	tk.MustExec("use test")
 	var input []string
 	var output []struct {
 		SQL  string
@@ -761,10 +721,8 @@ func TestUnmatchedTableInHint(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
-	p, is := utilitiesSetup()
-	se := tk.Session()
-	_, err := se.Execute(context.Background(), "use test")
-	require.NoError(t, err)
+	p, is, se := utilitiesSetup(tk)
+	tk.MustExec("use test")
 	var input []string
 	var output []struct {
 		SQL     string
@@ -800,10 +758,8 @@ func TestHintScope(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
-	p, is := utilitiesSetup()
-	se := tk.Session()
-	_, err := se.Execute(context.Background(), "use test")
-	require.NoError(t, err)
+	p, is, se := utilitiesSetup(tk)
+	tk.MustExec("use test")
 
 	var input []string
 	var output []struct {
@@ -835,10 +791,8 @@ func TestJoinHints(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
-	p, is := utilitiesSetup()
-	se := tk.Session()
-	_, err := se.Execute(context.Background(), "use test")
-	require.NoError(t, err)
+	p, is, se := utilitiesSetup(tk)
+	tk.MustExec("use test")
 
 	var input []string
 	var output []struct {
@@ -885,10 +839,8 @@ func TestAggregationHints(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
-	p, is := utilitiesSetup()
-	se := tk.Session()
-	_, err := se.Execute(context.Background(), "use test")
-	require.NoError(t, err)
+	p, is, se := utilitiesSetup(tk)
+	tk.MustExec("use test")
 
 	sessionVars := se.(sessionctx.Context).GetSessionVars()
 	sessionVars.SetHashAggFinalConcurrency(1)
@@ -957,8 +909,7 @@ func TestAggToCopHint(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
-	p, is := utilitiesSetup()
-	se := tk.Session()
+	p, is, se := utilitiesSetup(tk)
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists ta")
@@ -1219,10 +1170,8 @@ func TestHintAlias(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
-	p, is := utilitiesSetup()
-	se := tk.Session()
-	_, err := se.Execute(context.Background(), "use test")
-	require.NoError(t, err)
+	p, is, se := utilitiesSetup(tk)
+	tk.MustExec("use test")
 
 	tests := []struct {
 		sql1 string
@@ -1263,10 +1212,8 @@ func TestIndexHint(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
-	p, is := utilitiesSetup()
-	se := tk.Session()
-	_, err := se.Execute(context.Background(), "use test")
-	require.NoError(t, err)
+	p, is, se := utilitiesSetup(tk)
+	tk.MustExec("use test")
 
 	var input []string
 	var output []struct {
@@ -1309,10 +1256,8 @@ func TestIndexMergeHint(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
-	p, is := utilitiesSetup()
-	se := tk.Session()
-	_, err := se.Execute(context.Background(), "use test")
-	require.NoError(t, err)
+	p, is, se := utilitiesSetup(tk)
+	tk.MustExec("use test")
 
 	var input []string
 	var output []struct {
@@ -1356,10 +1301,8 @@ func TestQueryBlockHint(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
-	p, is := utilitiesSetup()
-	se := tk.Session()
-	_, err := se.Execute(context.Background(), "use test")
-	require.NoError(t, err)
+	p, is, se := utilitiesSetup(tk)
+	tk.MustExec("use test")
 
 	var input []string
 	var output []struct {
@@ -1393,17 +1336,12 @@ func TestInlineProjection(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
-	p, is := utilitiesSetup()
-	se := tk.Session()
+	p, is, se := utilitiesSetup(tk)
 	ctx := context.Background()
-	_, err := se.Execute(ctx, "use test")
-	require.NoError(t, err)
-	_, err = se.Execute(ctx, `drop table if exists test.t1, test.t2;`)
-	require.NoError(t, err)
-	_, err = se.Execute(ctx, `create table test.t1(a bigint, b bigint, index idx_a(a), index idx_b(b));`)
-	require.NoError(t, err)
-	_, err = se.Execute(ctx, `create table test.t2(a bigint, b bigint, index idx_a(a), index idx_b(b));`)
-	require.NoError(t, err)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists test.t1, test.t2;")
+	tk.MustExec("create table test.t1(a bigint, b bigint, index idx_a(a), index idx_b(b));")
+	tk.MustExec("create table test.t2(a bigint, b bigint, index idx_a(a), index idx_b(b));")
 
 	var input []string
 	var output []struct {
@@ -1437,10 +1375,8 @@ func TestDAGPlanBuilderSplitAvg(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
-	p, is := utilitiesSetup()
-	se := tk.Session()
-	_, err := se.Execute(context.Background(), "use test")
-	require.NoError(t, err)
+	p, is, se := utilitiesSetup(tk)
+	tk.MustExec("use test")
 	tests := []struct {
 		sql  string
 		plan string
@@ -1505,19 +1441,13 @@ func TestIndexJoinHint(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
-	p, is := utilitiesSetup()
-	se := tk.Session()
+	p, is, se := utilitiesSetup(tk)
 	ctx := context.Background()
-	_, err := se.Execute(ctx, "use test")
-	require.NoError(t, err)
-	_, err = se.Execute(ctx, `drop table if exists test.t1, test.t2, test.t;`)
-	require.NoError(t, err)
-	_, err = se.Execute(ctx, `create table test.t1(a bigint, b bigint, index idx_a(a), index idx_b(b));`)
-	require.NoError(t, err)
-	_, err = se.Execute(ctx, `create table test.t2(a bigint, b bigint, index idx_a(a), index idx_b(b));`)
-	require.NoError(t, err)
-	_, err = se.Execute(ctx, "CREATE TABLE `t` ( `a` bigint(20) NOT NULL, `b` tinyint(1) DEFAULT NULL, `c` datetime DEFAULT NULL, `d` int(10) unsigned DEFAULT NULL, `e` varchar(20) DEFAULT NULL, `f` double DEFAULT NULL, `g` decimal(30,5) DEFAULT NULL, `h` float DEFAULT NULL, `i` date DEFAULT NULL, `j` timestamp NULL DEFAULT NULL, PRIMARY KEY (`a`), UNIQUE KEY `b` (`b`), KEY `c` (`c`,`d`,`e`), KEY `f` (`f`), KEY `g` (`g`,`h`), KEY `g_2` (`g`), UNIQUE KEY `g_3` (`g`), KEY `i` (`i`) );")
-	require.NoError(t, err)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists test.t1, test.t2, test.t;")
+	tk.MustExec("create table test.t1(a bigint, b bigint, index idx_a(a), index idx_b(b));")
+	tk.MustExec("create table test.t2(a bigint, b bigint, index idx_a(a), index idx_b(b));")
+	tk.MustExec("CREATE TABLE `t` ( `a` bigint(20) NOT NULL, `b` tinyint(1) DEFAULT NULL, `c` datetime DEFAULT NULL, `d` int(10) unsigned DEFAULT NULL, `e` varchar(20) DEFAULT NULL, `f` double DEFAULT NULL, `g` decimal(30,5) DEFAULT NULL, `h` float DEFAULT NULL, `i` date DEFAULT NULL, `j` timestamp NULL DEFAULT NULL, PRIMARY KEY (`a`), UNIQUE KEY `b` (`b`), KEY `c` (`c`,`d`,`e`), KEY `f` (`f`), KEY `g` (`g`,`h`), KEY `g_2` (`g`), UNIQUE KEY `g_3` (`g`), KEY `i` (`i`) );")
 	var input []string
 	var output []struct {
 		SQL  string
@@ -1586,15 +1516,11 @@ func doTestDAGPlanBuilderWindow(t *testing.T, vars, input []string, output []str
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
-	p, is := utilitiesSetup()
-	se := tk.Session()
-	ctx := context.Background()
-	_, err := se.Execute(ctx, "use test")
-	require.NoError(t, err)
+	p, is, se := utilitiesSetup(tk)
+	tk.MustExec("use test")
 
 	for _, v := range vars {
-		_, err = se.Execute(ctx, v)
-		require.NoError(t, err)
+		tk.MustExec(v)
 	}
 
 	for i, tt := range input {
@@ -1649,24 +1575,15 @@ func TestHintFromDiffDatabase(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
-	p, is := utilitiesSetup()
-	se := tk.Session()
+	p, is, se := utilitiesSetup(tk)
 	ctx := context.Background()
-	_, err := se.Execute(ctx, "use test")
-	require.NoError(t, err)
-	_, err = se.Execute(ctx, `drop table if exists test.t1`)
-	require.NoError(t, err)
-	_, err = se.Execute(ctx, `create table test.t1(a bigint, index idx_a(a));`)
-	require.NoError(t, err)
-	_, err = se.Execute(ctx, `create table test.t2(a bigint, index idx_a(a));`)
-	require.NoError(t, err)
-
-	_, err = se.Execute(ctx, "drop database if exists test2")
-	require.NoError(t, err)
-	_, err = se.Execute(ctx, "create database test2")
-	require.NoError(t, err)
-	_, err = se.Execute(ctx, "use test2")
-	require.NoError(t, err)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists test.t1")
+	tk.MustExec("create table test.t1(a bigint, index idx_a(a));")
+	tk.MustExec("create table test.t2(a bigint, index idx_a(a));")
+	tk.MustExec("drop database if exists test2")
+	tk.MustExec("create database test2")
+	tk.MustExec("use test2")
 
 	var input []string
 	var output []struct {
@@ -1694,19 +1611,10 @@ func TestNthPlanHintWithExplain(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
-	se, err := session.CreateSession4Test(store)
-	require.NoError(t, err)
-	ctx := context.Background()
-	_, err = se.Execute(ctx, "use test")
-	require.NoError(t, err)
-	_, err = se.Execute(ctx, `drop table if exists test.tt`)
-	require.NoError(t, err)
-	_, err = se.Execute(ctx, `create table test.tt (a int,b int, index(a), index(b));`)
-	require.NoError(t, err)
-
-	_, err = se.Execute(ctx, "insert into tt values (1, 1), (2, 2), (3, 4)")
-	require.NoError(t, err)
-
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists test.tt")
+	tk.MustExec("create table test.tt (a int,b int, index(a), index(b));")
+	tk.MustExec("insert into tt values (1, 1), (2, 2), (3, 4)")
 	tk.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.Static) + `'`)
 
 	var input []string
@@ -1891,7 +1799,7 @@ func TestMPPSinglePartitionType(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
-	_, is := utilitiesSetup()
+	_, is, _ := utilitiesSetup(tk)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists employee")
 	tk.MustExec("create table employee(empid int, deptid int, salary decimal(10,2))")
